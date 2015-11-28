@@ -24,7 +24,10 @@
   #include "parse.h"
   #include <fcntl.h>
   #include <string.h>
-
+  #include <sys/types.h>
+  #include <unistd.h>
+  #include <ctype.h>
+  #include <sys/wait.h>
   /*
    * Function declarations
    */
@@ -35,7 +38,7 @@
   // void piping(char *args[]);
   void ifChangeDirectoryCommand(Command *cmd);
   void ifExitCommand(char **pl);
-  void execute(Command *cmd);
+  // void execute(Command *cmd);
   void execute2(Command *cmd);
   int execute3(Pgm *pgm, int in, int out);
 
@@ -58,7 +61,7 @@
     int n;
 
     while (!done) {
-
+      wait(NULL);
       char *line;
       line = readline("My lsh > ");
 
@@ -81,8 +84,8 @@
           // PrintCommand(n, &cmd);
           ifChangeDirectoryCommand(&cmd);
           ifExitCommand(cmd.pgm->pgmlist);
-          execute(&cmd);
-          // execute2(&cmd);
+          // execute(&cmd);
+          execute2(&cmd);
         }
       }
       
@@ -166,30 +169,28 @@
     string [++i] = '\0';
   }
 
-  void execute(Command *cmd){
-      pid_t pid; 
-      int status; 
-       
-
+  // void execute(Command *cmd){
      
+  //     pid_t pid; 
+  //     int status; 
 
-      if((pid = fork()) < 0){       //If the fork returns -1, the fork failed somehow
-          printf("Forking child process failed\n");
-          kill(getpid(),SIGTERM);
-          exit(1);
-      }
+  //     if((pid = fork()) < 0){       //If the fork returns -1, the fork failed somehow
+  //         printf("Forking child process failed\n");
+  //         kill(getpid(),SIGTERM);
+  //         exit(1);
+  //     }
 
-      else if (pid == 0){          //If forks() returns 0, the fork was successfull
-          if((execvp(*cmd->pgm->pgmlist, cmd->pgm->pgmlist)) < 0){       //If the execvp returns -1, the command failed to be executed
-              printf("Executing the command failed\n");
-              kill(getpid(),SIGTERM);
-              exit(1);
-          }
-      }
-      else{
-          while((wait(&status)) != pid);
-      }
-  }
+  //     else if (pid == 0){          //If forks() returns 0, the fork was successfull
+  //         if((execvp(*cmd->pgm->pgmlist, cmd->pgm->pgmlist)) < 0){       //If the execvp returns -1, the command failed to be executed
+  //             printf("Executing the command failed\n");
+  //             kill(getpid(),SIGTERM);
+  //             exit(1);
+  //         }
+  //     }
+  //     else{
+  //         while((wait(&status)) != pid);
+  //     }
+  // }
 
    void execute2(Command *cmd){
       pid_t pid; 
@@ -204,10 +205,10 @@
           exit(1);
       }
 
-      else if (pid == 0){          
+      if (pid == 0){          
           if(cmd->rstdin != NULL){      
               int in = 0;
-              if((in = open(cmd->rstdin, O_RDONLY)) < 0 ){
+              if((in = open(cmd->rstdin, O_RDONLY | O_CREAT)) < 0 ){
                 printf("Could not open cmd->rstdin\n");
 
               }
@@ -216,18 +217,21 @@
           }
           if(cmd->rstdout != NULL){
             int out = 0;
-            if((out = open(cmd->rstdout, O_WRONLY)) < 0){
+            if((out = open(cmd->rstdout, O_WRONLY | O_CREAT)) < 0){
               printf("Could not open cmd->rstdout\n");
             }
             dup2(out, fileno(stdout));
             close(out);
           }
-          if(cmd->pgm->pgmlist != NULL){
+          if(cmd->pgm->next != NULL){
             execute3(cmd->pgm, -1, -1);
             exit(0);
           }
+          
+
+
           int exec = 0;
-          if((exec = execvp(*cmd->pgm->pgmlist)) < 0){
+          if((exec = execvp(*cmd->pgm->pgmlist, cmd->pgm->pgmlist)) < 0){
             printf("Could not execute command in pgmlist\n");
             exit(0);
           }
@@ -235,6 +239,7 @@
       }
       if(cmd->bakground){
             //Dont wait for childs termination?
+            signal(SIGINT, SIG_IGN); //do not interrupt for childen in B
             return;
       }
       waitpid(pid, NULL, 0);
@@ -348,65 +353,98 @@
 
 int execute3(Pgm *pgm, int in, int out){
 
-  int piping[2];
+  
 
-  if(pgm->next == NULL){ //Probably last program to execute (so keep input)
+  int piping[2];
+  
+  if(pgm->next == NULL){
+         // printf("Gick in i NULL\n");
+                         //Probably last program to execute (so keep input)
       int child;
       if((child = fork()) < 0){
         printf("Could not fork child process\n");
         wait(NULL);     //Wait for any child process to return
         return child;
 
-      }else{
+      }else if(child == 0){
+        // printf("Snart kommer resultatet\n");
+        
+        
         close(fileno(stdout));
-        dup(in);
-        close(in);
-        close(out);
+        
+        if(dup(in) == -1){
+          printf("ERROR DUP()\n");
+        }
 
-        if(execvp(*pgm->pgmlist) < 0 ){
+         if(close(in) == -1){
+          printf("ERROR close(in)\n");
+        }
+        
+        
+        if(close(out) == -1 ){
+          printf("ERROR close(out)\n");
+        }
+        
+
+        if(execvp(*pgm->pgmlist, pgm->pgmlist) < 0 ){
           printf("Could not execute program from pgmlist, somewhere in the last pgm\n");
           exit(0);
         }
       }
   }
   else if(in == -1){ //Probably first pgm to execute (so keep output)
-      pipe(piping);
-      execute3(pgm->next, piping[in], piping[out]); //in and out
+      // printf("Piping\n");
+
+      
+    if(pipe(piping) < 0){
+      printf("Could not pipe?????\n");
+    }
+      execute3(pgm->next, piping[1], piping[0]);
+       //in and out
       int child;
       if((child = fork()) < 0 ){
         printf("Could not fork\n");
-        close(piping[1]);
         close(piping[0]);
+        close(piping[1]);
         wait(NULL); //Wait for any child to return
         return child;
 
-      }else{
-        close(stdin);
-        dup(piping[out]);
-        close(piping[out]);
-        close(piping[in]);
+      }else if (child == 0){
+        // printf("Lyckades forka på in == -1\n");
+        
+        
+        close(fileno(stdin));
 
-        if(execvp(*pgm->pgmlist) < 0){
+        dup(piping[0]);
+      
+        close(piping[0]);
+        close(piping[1]);
+
+        if(execvp(*pgm->pgmlist, pgm->pgmlist) < 0){
           printf("Could not execute fork program, somewhere in first pgm\n");
           exit(0);
         }
       }
   }
   else{   //Probably in the middle somewhere (so stdin and stdout)
-      pipe(piping);
-      execute3(pgm->next, piping[in], piping[out]);
+      
+      if(pipe(piping) < 0){
+      printf("Could not pipe?????\n");
+    }
+      execute3(pgm->next, piping[1], piping[0]);
       // int child;
-      if(/*child = */fork() < 0 ){
+      if((/*child =*/ fork()) < 0 ){
         printf("Could not fork program somewhere in the middle\n");
-        close(piping[1]);
         close(piping[0]);
+        close(piping[1]);
         wait(NULL);
-      }else{
+      }else if (fork() == 0){
+
         dup2(in, fileno(stdout));
-        dup2(piping[out], fileno(stdin));
+        dup2(piping[0], fileno(stdin));
         close(in);
-        close(piping[out]);
-        close(piping[in]);
+        close(piping[0]);
+        close(piping[1]);
 
         if(execvp(*pgm->pgmlist, pgm->pgmlist) < 0){
           printf("Could not execute execvp in the middle somewhere\n");
