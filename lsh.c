@@ -24,10 +24,13 @@
   #include "parse.h"
   #include <fcntl.h>
   #include <string.h>
+  #include <errno.h>
   #include <sys/types.h>
   #include <unistd.h>
   #include <ctype.h>
   #include <sys/wait.h>
+
+   
   /*
    * Function declarations
    */
@@ -81,11 +84,12 @@
           add_history(line);
           /* execute it */
           n = parse(line, &cmd);
-          // PrintCommand(n, &cmd);
+          
           ifChangeDirectoryCommand(&cmd);
           ifExitCommand(cmd.pgm->pgmlist);
           // execute(&cmd);
           execute2(&cmd);
+          PrintCommand(n, &cmd);
         }
       }
       
@@ -192,12 +196,27 @@
   //     }
   // }
 
+
+
+  /*
+Frågor för TA:
+--> När jag trycker sudo cat < tmp.1, får jag Error på open funktionen
+--> när jag kör piping så hinner output komma innan lsh kommer tillbaka. T
+    Testa med att köra ls -al | wc. Output My lsh > 13  110   780
+--> När man trycker på ctrl+C ska child process termineras, inte själva
+    lsh.
+
+
+
+
+  */
+
    void execute2(Command *cmd){
       pid_t pid; 
       int status; 
       
 
-     
+     // wait(NULL);
 
       if((pid = fork()) < 0){       //If the fork returns -1, the fork failed somehow
           printf("Forking child process failed\n");
@@ -210,6 +229,8 @@
               int in = 0;
               if((in = open(cmd->rstdin, O_RDONLY | O_CREAT)) < 0 ){
                 printf("Could not open cmd->rstdin\n");
+                printf("%s\n", strerror(errno));
+                return; 
 
               }
               dup2(in, fileno(stdin)); //CHANGE?
@@ -217,8 +238,10 @@
           }
           if(cmd->rstdout != NULL){
             int out = 0;
+            //Could use creat(cmd->rstdout, mode) too???
             if((out = open(cmd->rstdout, O_WRONLY | O_CREAT)) < 0){
               printf("Could not open cmd->rstdout\n");
+              return;
             }
             dup2(out, fileno(stdout));
             close(out);
@@ -233,17 +256,20 @@
           int exec = 0;
           if((exec = execvp(*cmd->pgm->pgmlist, cmd->pgm->pgmlist)) < 0){
             printf("Could not execute command in pgmlist\n");
+            printf("%s\n", strerror(errno));
             exit(0);
           }
          
       }
       if(cmd->bakground){
             //Dont wait for childs termination?
-            signal(SIGINT, SIG_IGN); //do not interrupt for childen in B
+            // printf("Är i background nu \n");
+            // signal(SIGINT, SIGTERM);
+            signal(SIGCHLD, SIG_IGN); //do not interrupt for childen in B
             return;
       }
       waitpid(pid, NULL, 0);
-      
+      wait(NULL);
   }
 
 
@@ -388,6 +414,7 @@ int execute3(Pgm *pgm, int in, int out){
 
         if(execvp(*pgm->pgmlist, pgm->pgmlist) < 0 ){
           printf("Could not execute program from pgmlist, somewhere in the last pgm\n");
+          printf("%s\n", strerror(errno));
           exit(0);
         }
       }
@@ -422,6 +449,7 @@ int execute3(Pgm *pgm, int in, int out){
 
         if(execvp(*pgm->pgmlist, pgm->pgmlist) < 0){
           printf("Could not execute fork program, somewhere in first pgm\n");
+          printf("%s\n", strerror(errno));
           exit(0);
         }
       }
@@ -432,13 +460,13 @@ int execute3(Pgm *pgm, int in, int out){
       printf("Could not pipe?????\n");
     }
       execute3(pgm->next, piping[1], piping[0]);
-      // int child;
-      if((/*child =*/ fork()) < 0 ){
+       int child;
+      if((child = fork()) < 0 ){
         printf("Could not fork program somewhere in the middle\n");
         close(piping[0]);
         close(piping[1]);
         wait(NULL);
-      }else if (fork() == 0){
+      }else if (child == 0){
 
         dup2(in, fileno(stdout));
         dup2(piping[0], fileno(stdin));
@@ -448,6 +476,7 @@ int execute3(Pgm *pgm, int in, int out){
 
         if(execvp(*pgm->pgmlist, pgm->pgmlist) < 0){
           printf("Could not execute execvp in the middle somewhere\n");
+          printf("%s\n", strerror(errno));
           exit(0);
         }
 
